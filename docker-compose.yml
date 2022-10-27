@@ -1,0 +1,120 @@
+version: '3'
+services:
+    #PHP Service
+    corcom-sys:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+                WWWUSER: '${WWWUSER}'
+        image: digitalocean.com/php
+        # ports:
+        #     - '${APP_PORT:-80}:80'
+        #     - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
+        container_name: corcom-sys
+        restart: unless-stopped
+        tty: true
+        environment:
+            SERVICE_NAME: app
+            SERVICE_TAGS: prod
+        working_dir: /var/www
+        volumes:
+            - srcdata:/var/www
+            - ./php/local.ini:/usr/local/etc/php/conf.d/local.ini
+        networks:
+            - corcom-sys-network
+        depends_on:
+            - webserver
+            - db
+
+    #Nginx Service
+    webserver:
+        image: nginx:alpine
+        container_name: corcom-sys_webserver
+        restart: unless-stopped
+        tty: true
+        ports:
+            - "80:80"
+            - "443:443"
+        volumes:
+            - ./:/var/www
+            - ./nginx/conf.d/:/etc/nginx/conf.d/
+        networks:
+            - corcom-sys-network
+
+    #MySQL Service
+    db:
+        image: mariadb:10
+        container_name: corcom-sys_db
+        restart: unless-stopped
+        # tty: true
+        ports:
+            - '${FORWARD_DB_PORT:-3306}:3306'
+        environment:
+            MYSQL_DATABASE: '${DB_DATABASE}'
+            MYSQL_ROOT_PASSWORD: '${DB_ROOT_PASSWORD}'
+            MYSQL_USER: '${DB_USERNAME}'
+            MYSQL_PASSWORD: '${DB_PASSWORD}'
+            SERVICE_TAGS: prod
+            SERVICE_NAME: mysql
+        volumes:
+            - dbdata:/var/lib/mysql/
+            - ./mysql/my.cnf:/etc/mysql/my.cnf
+            - ./sql_scripts:/docker-entrypoint-initdb.d
+        networks:
+            - corcom-sys-network
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-p${DB_PASSWORD}"]
+            retries: 3
+            timeout: 5s
+
+    composer:
+        image: composer:latest
+        container_name: corcom-sys_composer
+        volumes:
+            - srcdata:/var/www/
+        working_dir: /var/www/
+        depends_on:
+            - corcom-sys
+        networks:
+            - corcom-sys-network
+
+    npm:
+        image: node:16
+        container_name: corcom-sys_npm
+        volumes:
+            - srcdata:/var/www/
+        working_dir: /var/www/
+        depends_on:
+            - corcom-sys
+        entrypoint: ['npm']
+
+    artisan:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+                WWWUSER: '${WWWUSER}'
+        container_name: corcom-sys_artisan
+        volumes:
+            - srcdata:/var/www/
+        depends_on:
+            - corcom-sys
+            - db
+        working_dir: /var/www/
+        entrypoint: ['php', '/var/www/artisan']
+        networks:
+            - corcom-sys-network
+
+#Docker Networks
+networks:
+    corcom-sys-network:
+        driver: bridge
+
+#Volumes
+volumes:
+    dbdata:
+        driver: local
+    srcdata:
